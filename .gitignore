@@ -3,3 +3,4 @@ node_modules/
 .venv/
 *.mp4
 frame_tmp.jpg
+cv-service/*.jpg
