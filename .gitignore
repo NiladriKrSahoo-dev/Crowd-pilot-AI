@@ -6,3 +6,4 @@ frame_tmp.jpg
 cv-service/*.jpg
 cv-service/visuals/
 cv-service/visuals/
+.DS_Store
