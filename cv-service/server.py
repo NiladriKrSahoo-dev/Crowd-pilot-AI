@@ -1,4 +1,5 @@
 import math
+import os
 import random
 import threading
 import time
@@ -8,7 +9,8 @@ import cv2
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from lwcc import LWCC
 
@@ -700,14 +702,34 @@ setInterval(load, 3000);
 """
 
 
-@app.get("/", response_class=HTMLResponse)
+DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+INDEX_FILE = os.path.join(DIST_DIR, "index.html")
+ASSETS_DIR = os.path.join(DIST_DIR, "assets")
+
+if os.path.isdir(ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+
+@app.get("/favicon.svg")
+def favicon():
+    fav = os.path.join(DIST_DIR, "favicon.svg")
+    if os.path.isfile(fav):
+        return FileResponse(fav)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/")
 def dashboard():
-    return DASHBOARD_HTML
+    if os.path.isfile(INDEX_FILE):
+        return FileResponse(INDEX_FILE)
+    return HTMLResponse(DASHBOARD_HTML)
 
 
-@app.get("/public", response_class=HTMLResponse)
+@app.get("/public")
 def public_page():
-    return PUBLIC_HTML
+    if os.path.isfile(INDEX_FILE):
+        return FileResponse(INDEX_FILE)
+    return HTMLResponse(PUBLIC_HTML)
 
 
 if __name__ == "__main__":

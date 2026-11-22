@@ -114,6 +114,29 @@ class TestServerLogic(unittest.TestCase):
         self.assertEqual(res_reopen, {"site": "B", "closed": False})
         self.assertFalse(server.SITES["B"]["closed"])
 
+    def test_serve_build_or_fallback(self):
+        # When dist exists
+        resp_root = server.dashboard()
+        resp_public = server.public_page()
+        if server.os.path.isfile(server.INDEX_FILE):
+            self.assertIsInstance(resp_root, server.FileResponse)
+            self.assertEqual(resp_root.path, server.INDEX_FILE)
+            self.assertIsInstance(resp_public, server.FileResponse)
+            self.assertEqual(resp_public.path, server.INDEX_FILE)
+
+        # Fallback test when index file is simulated missing
+        orig_index = server.INDEX_FILE
+        try:
+            server.INDEX_FILE = "/nonexistent/path/index.html"
+            fallback_root = server.dashboard()
+            fallback_public = server.public_page()
+            self.assertIsInstance(fallback_root, server.HTMLResponse)
+            self.assertIn("Crowd Pilot AI", fallback_root.body.decode("utf-8"))
+            self.assertIsInstance(fallback_public, server.HTMLResponse)
+            self.assertIn("Pandal crowd guide", fallback_public.body.decode("utf-8"))
+        finally:
+            server.INDEX_FILE = orig_index
+
 
 if __name__ == "__main__":
     unittest.main()
