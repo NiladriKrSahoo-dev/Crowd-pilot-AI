@@ -1,3 +1,4 @@
+import hmac
 import math
 import os
 import random
@@ -36,6 +37,7 @@ SITES = {
     "D": {"name": "Pandal D", "capacity": 220, "closed": False},
     "E": {"name": "Pandal E", "capacity": 150, "closed": False},
 }
+# Demo-only administrative PIN. In production this would be backed by an auth provider.
 ADMIN_PIN = "1234"
 WALK_MIN = {
     "North gate": {"A": 4, "B": 7, "C": 12, "D": 9, "E": 15},
@@ -65,6 +67,8 @@ state = {
 alerts = deque(maxlen=30)
 history = deque(maxlen=60)
 advisories = deque(maxlen=15)
+no_room_events = deque()
+last_no_room_alert_time = 0.0
 loads = {sid: 0.5 * cfg["capacity"] for sid, cfg in SITES.items()}
 pending = {sid: 0.0 for sid in SITES}
 
@@ -133,6 +137,7 @@ def publish_sites():
         })
     state["sites"] = rows
     state["advisories"] = list(advisories)
+    state["alerts"] = list(alerts)
 
 
 def recommend(gate, want):
@@ -166,12 +171,31 @@ def recommend(gate, want):
                 message = (f"{want_name} is very busy right now. {dest_name} is about "
                            f"{minutes[dest]} minutes from the {gate} and has more room.")
         else:
+            dest = None
             if want_closed:
                 message = (f"{want_name} is currently closed and all other pandals are busy. "
                            "Waiting a little before visiting may help.")
             else:
                 message = ("All pandals are busy right now. Waiting a little before "
                            "going in may help.")
+
+            now = time.time()
+            no_room_events.append(now)
+            cutoff = now - 60.0
+            while no_room_events and no_room_events[0] < cutoff:
+                no_room_events.popleft()
+
+            global last_no_room_alert_time
+            if len(no_room_events) >= 5 and (now - last_no_room_alert_time >= 60.0):
+                last_no_room_alert_time = now
+                n_visitors = len(no_room_events)
+                alerts.appendleft({
+                    "clock": time.strftime("%H:%M:%S"),
+                    "zone": None,
+                    "level": "PUBLIC",
+                    "message": f"{n_visitors} visitors in the last minute could not be redirected: no open pandal has room",
+                    "action": "Consider opening extra capacity or pausing entry at the gates",
+                })
 
     status = "CLOSED" if dest and SITES[dest].get("closed") else (status_for(occupancy(dest)) if dest else None)
     if dest:
@@ -375,12 +399,27 @@ class AdminClosedRequest(BaseModel):
 
 @app.post("/api/admin/closed")
 def admin_closed(payload: AdminClosedRequest):
-    if payload.pin != ADMIN_PIN:
+    if not hmac.compare_digest(payload.pin, ADMIN_PIN):
         raise HTTPException(status_code=403, detail="wrong PIN")
     if payload.site not in SITES:
         raise HTTPException(status_code=400, detail="unknown site")
     with lock:
         SITES[payload.site]["closed"] = payload.closed
+        site_name = SITES[payload.site]["name"]
+        if payload.closed:
+            msg = f"{site_name} closed by the authority"
+            act = f"Public guide will redirect visitors away from {site_name} to open alternatives"
+        else:
+            msg = f"{site_name} reopened"
+            act = f"Public guide will include {site_name} in route recommendations"
+
+        alerts.appendleft({
+            "clock": time.strftime("%H:%M:%S"),
+            "zone": None,
+            "level": "ADMIN",
+            "message": msg,
+            "action": act,
+        })
         publish_sites()
     return {"site": payload.site, "closed": payload.closed}
 

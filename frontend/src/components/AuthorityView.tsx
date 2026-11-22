@@ -51,7 +51,7 @@ export function AuthorityView({ onNavigate }: AuthorityViewProps) {
     let pin = adminPin;
 
     if (!pin) {
-      const input = window.prompt("Enter admin PIN to modify pandal status (demo: 1234):");
+      const input = window.prompt("Enter admin PIN to modify pandal status:");
       if (!input) return;
       pin = input.trim();
     }
@@ -350,8 +350,12 @@ export function AuthorityView({ onNavigate }: AuthorityViewProps) {
                               a.level === "RED"
                                 ? "bg-rose-950 text-rose-300 border border-rose-800"
                                 : a.level === "CHECK"
-                                ? "bg-slate-800 text-slate-300"
-                                : "bg-gray-800 text-gray-300"
+                                ? "bg-slate-800 text-slate-300 border border-slate-700"
+                                : a.level === "PUBLIC"
+                                ? "bg-sky-950/80 text-sky-300 border border-sky-800/60"
+                                : a.level === "ADMIN"
+                                ? "bg-indigo-950/80 text-indigo-300 border border-indigo-800/60"
+                                : "bg-gray-800 text-gray-300 border border-gray-700"
                             }`}
                           >
                             {a.level}

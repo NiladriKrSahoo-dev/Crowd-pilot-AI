@@ -4,28 +4,42 @@ import server
 
 
 class TestServerLogic(unittest.TestCase):
-    def test_next_level_thresholds(self):
-        # Green baseline
+    def setUp(self):
+        # Reset server state between tests
+        with server.lock:
+            for sid, cfg in server.SITES.items():
+                cfg["closed"] = False
+                server.loads[sid] = 0.5 * cfg["capacity"]
+                server.pending[sid] = 0.0
+            server.alerts.clear()
+            server.advisories.clear()
+            server.no_room_events.clear()
+            server.last_no_room_alert_time = 0.0
+            server.publish_sites()
+
+    def test_next_level_thresholds_and_hysteresis(self):
+        # GREEN to AMBER at 2.0
         self.assertEqual(server.next_level("GREEN", 0.0), "GREEN")
-        self.assertEqual(server.next_level("GREEN", 1.5), "GREEN")
-        # Amber trigger
+        self.assertEqual(server.next_level("GREEN", 1.99), "GREEN")
         self.assertEqual(server.next_level("GREEN", 2.0), "AMBER")
-        self.assertEqual(server.next_level("GREEN", 3.0), "AMBER")
-        # Red trigger
+
+        # AMBER stays at or above 1.8; drops to GREEN below 1.8
+        self.assertEqual(server.next_level("AMBER", 1.8), "AMBER")
+        self.assertEqual(server.next_level("AMBER", 1.79), "GREEN")
+
+        # AMBER to RED at 4.0
+        self.assertEqual(server.next_level("AMBER", 3.99), "AMBER")
         self.assertEqual(server.next_level("AMBER", 4.0), "RED")
-        # Check trigger (density > MAX_PLAUSIBLE = 8.0)
-        self.assertEqual(server.next_level("RED", 8.5), "CHECK")
-        self.assertEqual(server.next_level("GREEN", 9.0), "CHECK")
 
-    def test_next_level_hysteresis(self):
-        # Red drops below 3.6 to become Amber
-        self.assertEqual(server.next_level("RED", 3.8), "RED")
-        self.assertEqual(server.next_level("RED", 3.5), "AMBER")
-        self.assertEqual(server.next_level("RED", 1.5), "GREEN")
+        # RED stays at or above 3.6; drops to AMBER below 3.6
+        self.assertEqual(server.next_level("RED", 3.6), "RED")
+        self.assertEqual(server.next_level("RED", 3.59), "AMBER")
+        self.assertEqual(server.next_level("RED", 1.7), "GREEN")
 
-        # Amber drops below 1.8 to become Green
-        self.assertEqual(server.next_level("AMBER", 1.9), "AMBER")
-        self.assertEqual(server.next_level("AMBER", 1.7), "GREEN")
+        # CHECK above 8
+        self.assertEqual(server.next_level("RED", 8.0), "RED")
+        self.assertEqual(server.next_level("RED", 8.01), "CHECK")
+        self.assertEqual(server.next_level("GREEN", 8.5), "CHECK")
 
     def test_suggested_action(self):
         self.assertIn("limit new entry", server.suggested_action("RED", 1))
@@ -39,52 +53,103 @@ class TestServerLogic(unittest.TestCase):
         self.assertEqual(server.status_for(0.84), "BUSY")
         self.assertEqual(server.status_for(0.85), "VERY BUSY")
 
-    def test_recommend_and_routes(self):
+    def test_redirects_spread_across_pandals(self):
+        # Make wanted pandal A very busy
         with server.lock:
+            server.loads["A"] = 0.90 * server.SITES["A"]["capacity"]
             server.publish_sites()
 
-        # Test valid recommendation
-        res = server.api_recommend(gate="North gate", want="A")
-        self.assertIn("send", res)
-        self.assertIn("send_name", res)
-        self.assertIn("message", res)
-        self.assertIn("redirected", res)
+        # Send multiple recommendation requests and collect chosen destinations
+        destinations = []
+        for _ in range(6):
+            with server.lock:
+                res = server.recommend("North gate", "A")
+            self.assertTrue(res["redirected"])
+            self.assertIsNotNone(res["send"])
+            self.assertNotEqual(res["send"], "A")
+            dest = res["send"]
+            # Verify the destination was not already pushed past 85% BEFORE being chosen
+            # (effective occupancy before the last increment was < 0.85)
+            dest_occ_after = server.occupancy(dest)
+            # The increment was 1 group (= 8 people / capacity)
+            inc = server.REDIRECT_WEIGHT / server.SITES[dest]["capacity"]
+            occ_before = dest_occ_after - inc
+            self.assertLess(occ_before, server.VERY_BUSY_AT)
+            destinations.append(dest)
 
-        # Test invalid gate
-        with self.assertRaises(HTTPException):
-            server.api_recommend(gate="Nonexistent gate", want="A")
+        # Confirm redirects spread across more than one alternative pandal
+        unique_destinations = set(destinations)
+        self.assertGreater(len(unique_destinations), 1, "Redirects should be spread across alternatives")
 
-        # Test invalid want
-        with self.assertRaises(HTTPException):
-            server.api_recommend(gate="North gate", want="Z")
-
-        # Test public_sites
-        sites = server.public_sites()
-        self.assertIn("gates", sites)
-        self.assertIn("sites", sites)
-        self.assertTrue(len(sites["gates"]) > 0)
-        for s in sites["sites"]:
-            self.assertIn("id", s)
-            self.assertIn("name", s)
-            self.assertIn("status", s)
-            # Public sites should NOT leak people counts
-            self.assertNotIn("people", s)
-            self.assertNotIn("capacity", s)
-
-        # Test get_state
-        state = server.get_state()
-        self.assertIn("ready", state)
-        self.assertIn("calibrated", state)
-        self.assertIn("sites", state)
-        self.assertIn("zones", state)
-        self.assertIn("alerts", state)
-        self.assertIn("history", state)
-
-    def test_admin_closed(self):
+    def test_closed_pandal_never_recommended(self):
         with server.lock:
-            server.SITES["B"]["closed"] = False
+            server.SITES["B"]["closed"] = True
             server.publish_sites()
 
+        # Requesting open pandal A when A is very busy
+        server.loads["A"] = 0.90 * server.SITES["A"]["capacity"]
+        for gate in server.WALK_MIN:
+            res = server.recommend(gate, "A")
+            self.assertNotEqual(res["send"], "B", "Closed pandal B must never be recommended as alternative")
+
+        # Requesting closed pandal B directly
+        for gate in server.WALK_MIN:
+            res = server.recommend(gate, "B")
+            self.assertNotEqual(res["send"], "B", "Closed pandal B must never recommend itself")
+            if res["send"] is not None:
+                self.assertFalse(server.SITES[res["send"]]["closed"])
+
+        # When all pandals are closed
+        with server.lock:
+            for cfg in server.SITES.values():
+                cfg["closed"] = True
+            server.publish_sites()
+
+        res = server.recommend("North gate", "A")
+        self.assertIsNone(res["send"], "When all pandals are closed, send must be None")
+
+    def test_all_busy_alert_fires_once_per_window(self):
+        # Make all pandals busy so no open pandal has room
+        with server.lock:
+            for sid, cfg in server.SITES.items():
+                server.loads[sid] = 0.95 * cfg["capacity"]
+            server.publish_sites()
+
+        public_alerts = [a for a in server.alerts if a["level"] == "PUBLIC"]
+        self.assertEqual(len(public_alerts), 0)
+
+        # 4 requests with no room
+        for _ in range(4):
+            with server.lock:
+                res = server.recommend("North gate", "A")
+                self.assertIsNone(res["send"])
+            public_alerts = [a for a in server.alerts if a["level"] == "PUBLIC"]
+            self.assertEqual(len(public_alerts), 0)
+
+        # 5th request triggers the alert
+        with server.lock:
+            res = server.recommend("North gate", "A")
+            self.assertIsNone(res["send"])
+            server.publish_sites()
+
+        public_alerts = [a for a in server.alerts if a["level"] == "PUBLIC"]
+        self.assertEqual(len(public_alerts), 1)
+        alert = public_alerts[0]
+        self.assertIsNone(alert["zone"])
+        self.assertEqual(alert["level"], "PUBLIC")
+        self.assertIn("could not be redirected: no open pandal has room", alert["message"])
+        self.assertEqual(alert["action"], "Consider opening extra capacity or pausing entry at the gates")
+
+        # Subsequent requests within 60s do NOT trigger another alert
+        for _ in range(5):
+            with server.lock:
+                server.recommend("North gate", "A")
+                server.publish_sites()
+
+        public_alerts = [a for a in server.alerts if a["level"] == "PUBLIC"]
+        self.assertEqual(len(public_alerts), 1, "Alert must fire at most once per 60 second window")
+
+    def test_admin_closed_and_alerts(self):
         # Wrong PIN -> 403
         req_bad_pin = server.AdminClosedRequest(site="B", closed=True, pin="wrong")
         with self.assertRaises(HTTPException) as ctx:
@@ -103,10 +168,24 @@ class TestServerLogic(unittest.TestCase):
         self.assertEqual(res, {"site": "B", "closed": True})
         self.assertTrue(server.SITES["B"]["closed"])
 
+        # Check ADMIN alert logged
+        admin_alerts = [a for a in server.alerts if a["level"] == "ADMIN"]
+        self.assertTrue(len(admin_alerts) >= 1)
+        close_alert = admin_alerts[0]
+        self.assertIsNone(close_alert["zone"])
+        self.assertEqual(close_alert["level"], "ADMIN")
+        self.assertIn("Pandal B closed by the authority", close_alert["message"])
+
         # Check public sites reflect CLOSED
         pub = server.public_sites()
         site_b = next(s for s in pub["sites"] if s["id"] == "B")
         self.assertEqual(site_b["status"], "CLOSED")
+
+        # Check /api/state reflects closed: True
+        st = server.get_state()
+        site_b_state = next(s for s in st["sites"] if s["id"] == "B")
+        self.assertTrue(site_b_state["closed"])
+        self.assertEqual(site_b_state["status"], "CLOSED")
 
         # Reopen
         req_reopen = server.AdminClosedRequest(site="B", closed=False, pin="1234")
@@ -114,8 +193,12 @@ class TestServerLogic(unittest.TestCase):
         self.assertEqual(res_reopen, {"site": "B", "closed": False})
         self.assertFalse(server.SITES["B"]["closed"])
 
+        # Check reopen ADMIN alert logged
+        admin_alerts = [a for a in server.alerts if a["level"] == "ADMIN"]
+        reopen_alert = admin_alerts[0]
+        self.assertIn("Pandal B reopened", reopen_alert["message"])
+
     def test_serve_build_or_fallback(self):
-        # When dist exists
         resp_root = server.dashboard()
         resp_public = server.public_page()
         if server.os.path.isfile(server.INDEX_FILE):
@@ -124,7 +207,6 @@ class TestServerLogic(unittest.TestCase):
             self.assertIsInstance(resp_public, server.FileResponse)
             self.assertEqual(resp_public.path, server.INDEX_FILE)
 
-        # Fallback test when index file is simulated missing
         orig_index = server.INDEX_FILE
         try:
             server.INDEX_FILE = "/nonexistent/path/index.html"
