@@ -99,6 +99,10 @@ sed -i '' 's#"/.lwcc/weights"#os.path.expanduser("~/.lwcc/weights")#' $F
 sed -i '' 's#"/.lwcc/weights/"#".lwcc/weights/"#' $F
 ```
 
+## Demo Script
+
+A complete 2-minute walkthrough script covering the authority dashboard, calibration notice, pandal closing, and public rerouting is available in [docs/DEMO.md](docs/DEMO.md).
+
 ## Roadmap
 
 - [ ] Floor calibration (homography) to estimate real area per zone
