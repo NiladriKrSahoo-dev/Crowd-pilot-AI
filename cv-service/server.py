@@ -9,6 +9,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 from lwcc import LWCC
 
 # ---------------- settings ----------------
@@ -27,12 +28,13 @@ MAX_PLAUSIBLE = 8.0
 # Demo pandals. Only A is fed by the camera. The others are simulated.
 # Capacities and walking times are made up for the demo.
 SITES = {
-    "A": {"name": "Pandal A", "capacity": 260, "live": True},
-    "B": {"name": "Pandal B", "capacity": 180},
-    "C": {"name": "Pandal C", "capacity": 300},
-    "D": {"name": "Pandal D", "capacity": 220},
-    "E": {"name": "Pandal E", "capacity": 150},
+    "A": {"name": "Pandal A", "capacity": 260, "live": True, "closed": False},
+    "B": {"name": "Pandal B", "capacity": 180, "closed": False},
+    "C": {"name": "Pandal C", "capacity": 300, "closed": False},
+    "D": {"name": "Pandal D", "capacity": 220, "closed": False},
+    "E": {"name": "Pandal E", "capacity": 150, "closed": False},
 }
+ADMIN_PIN = "1234"
 WALK_MIN = {
     "North gate": {"A": 4, "B": 7, "C": 12, "D": 9, "E": 15},
     "East gate": {"A": 9, "B": 3, "C": 6, "D": 10, "E": 8},
@@ -116,14 +118,16 @@ def publish_sites():
     rows = []
     for sid, cfg in SITES.items():
         occ = occupancy(sid)
+        is_closed = bool(cfg.get("closed", False))
         rows.append({
             "id": sid,
             "name": cfg["name"],
             "live": bool(cfg.get("live")),
+            "closed": is_closed,
             "people": round(loads[sid]),
             "capacity": cfg["capacity"],
             "occupancy": round(occ * 100),
-            "status": status_for(occ),
+            "status": "CLOSED" if is_closed else status_for(occ),
         })
     state["sites"] = rows
     state["advisories"] = list(advisories)
@@ -136,7 +140,9 @@ def recommend(gate, want):
     dest = None
     redirected = False
 
-    if occ_want < VERY_BUSY_AT:
+    want_closed = bool(SITES[want].get("closed", False))
+
+    if not want_closed and occ_want < VERY_BUSY_AT:
         dest = want
         if occ_want < BUSY_AT:
             message = (f"{want_name} has plenty of room right now. "
@@ -145,19 +151,27 @@ def recommend(gate, want):
             message = (f"{want_name} is busy but moving. About {minutes[want]} minutes "
                        f"from the {gate}. Expect slower walking near the entrance.")
     else:
-        options = [s for s in SITES if s != want and occupancy(s) < VERY_BUSY_AT]
+        options = [s for s in SITES if s != want and not SITES[s].get("closed") and occupancy(s) < VERY_BUSY_AT]
         if options:
             # Prefer a short walk AND a quiet place.
             dest = min(options, key=lambda s: minutes[s] + 20 * occupancy(s))
             redirected = True
             dest_name = SITES[dest]["name"]
-            message = (f"{want_name} is very busy right now. {dest_name} is about "
-                       f"{minutes[dest]} minutes from the {gate} and has more room.")
+            if want_closed:
+                message = (f"{want_name} is currently closed. {dest_name} is about "
+                           f"{minutes[dest]} minutes from the {gate} and has more room.")
+            else:
+                message = (f"{want_name} is very busy right now. {dest_name} is about "
+                           f"{minutes[dest]} minutes from the {gate} and has more room.")
         else:
-            message = ("All pandals are busy right now. Waiting a little before "
-                       "going in may help.")
+            if want_closed:
+                message = (f"{want_name} is currently closed and all other pandals are busy. "
+                           "Waiting a little before visiting may help.")
+            else:
+                message = ("All pandals are busy right now. Waiting a little before "
+                           "going in may help.")
 
-    status = status_for(occupancy(dest)) if dest else None
+    status = "CLOSED" if dest and SITES[dest].get("closed") else (status_for(occupancy(dest)) if dest else None)
     if dest:
         pending[dest] += 1   # remember that we just sent someone there
 
@@ -349,6 +363,24 @@ def api_recommend(gate: str, want: str):
         result = recommend(gate, want)
         publish_sites()
     return result
+
+
+class AdminClosedRequest(BaseModel):
+    site: str
+    closed: bool
+    pin: str
+
+
+@app.post("/api/admin/closed")
+def admin_closed(payload: AdminClosedRequest):
+    if payload.pin != ADMIN_PIN:
+        raise HTTPException(status_code=403, detail="wrong PIN")
+    if payload.site not in SITES:
+        raise HTTPException(status_code=400, detail="unknown site")
+    with lock:
+        SITES[payload.site]["closed"] = payload.closed
+        publish_sites()
+    return {"site": payload.site, "closed": payload.closed}
 
 
 DASHBOARD_HTML = """<!doctype html>

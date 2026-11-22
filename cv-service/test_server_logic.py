@@ -80,6 +80,40 @@ class TestServerLogic(unittest.TestCase):
         self.assertIn("alerts", state)
         self.assertIn("history", state)
 
+    def test_admin_closed(self):
+        with server.lock:
+            server.SITES["B"]["closed"] = False
+            server.publish_sites()
+
+        # Wrong PIN -> 403
+        req_bad_pin = server.AdminClosedRequest(site="B", closed=True, pin="wrong")
+        with self.assertRaises(HTTPException) as ctx:
+            server.admin_closed(req_bad_pin)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        # Unknown site -> 400
+        req_bad_site = server.AdminClosedRequest(site="UNKNOWN", closed=True, pin="1234")
+        with self.assertRaises(HTTPException) as ctx:
+            server.admin_closed(req_bad_site)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        # Successful close
+        req_ok = server.AdminClosedRequest(site="B", closed=True, pin="1234")
+        res = server.admin_closed(req_ok)
+        self.assertEqual(res, {"site": "B", "closed": True})
+        self.assertTrue(server.SITES["B"]["closed"])
+
+        # Check public sites reflect CLOSED
+        pub = server.public_sites()
+        site_b = next(s for s in pub["sites"] if s["id"] == "B")
+        self.assertEqual(site_b["status"], "CLOSED")
+
+        # Reopen
+        req_reopen = server.AdminClosedRequest(site="B", closed=False, pin="1234")
+        res_reopen = server.admin_closed(req_reopen)
+        self.assertEqual(res_reopen, {"site": "B", "closed": False})
+        self.assertFalse(server.SITES["B"]["closed"])
+
 
 if __name__ == "__main__":
     unittest.main()
