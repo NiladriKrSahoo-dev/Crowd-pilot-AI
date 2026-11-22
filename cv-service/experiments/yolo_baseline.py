@@ -1,3 +1,11 @@
+"""
+YOLO baseline experiment.
+
+Documented baseline: person-box detection struggles in dense crowds due to
+severe occlusion, overlapping bodies, and scale variations. This is why Crowd Pilot AI
+uses density maps (e.g. CSRNet) rather than bounding-box object detection.
+"""
+
 import cv2
 import urllib.request
 from ultralytics import YOLO

@@ -1,4 +1,3 @@
-import React from 'react';
 import { AlertTriangle, Video, Map, BarChart3 } from 'lucide-react';
 
 function App() {
