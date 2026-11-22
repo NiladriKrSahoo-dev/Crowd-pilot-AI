@@ -1,6 +1,10 @@
 """
 YOLO baseline experiment.
 
+Note: Running this script requires 'pip install ultralytics', which is
+intentionally not included in requirements.txt because the production system
+uses density estimation (CSRNet via LWCC).
+
 Documented baseline: person-box detection struggles in dense crowds due to
 severe occlusion, overlapping bodies, and scale variations. This is why Crowd Pilot AI
 uses density maps (e.g. CSRNet) rather than bounding-box object detection.

@@ -1,9 +1,10 @@
-node_modules
 node_modules/
 .venv/
+dist/
+frontend/dist/
 *.mp4
+*.pt
 frame_tmp.jpg
 cv-service/*.jpg
-cv-service/visuals/
 cv-service/visuals/
 .DS_Store
