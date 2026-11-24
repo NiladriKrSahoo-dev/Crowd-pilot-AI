@@ -103,7 +103,7 @@ export function PublicView({ onNavigate }: PublicViewProps) {
               <h1 className="text-xl font-bold tracking-tight text-white">Pandal Crowd Guide</h1>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Live capacity status and calm route recommendations.
+              Demo capacity status and calm route recommendations.
             </p>
           </div>
 
@@ -156,7 +156,7 @@ export function PublicView({ onNavigate }: PublicViewProps) {
               </h2>
               <span className="text-[11px] text-gray-400 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Updated real-time
+                Demo data, refreshes every few seconds
               </span>
             </div>
 

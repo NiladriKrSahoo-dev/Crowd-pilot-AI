@@ -29,19 +29,43 @@ export function AuthorityView({ onNavigate }: AuthorityViewProps) {
   const [pinError, setPinError] = useState<string | null>(null);
   const [updatingSite, setUpdatingSite] = useState<string | null>(null);
 
-  // Compute overall risk from zone statuses
-  const computeOverallRisk = (zones: Zone[]): { label: string; color: string; bg: string; border: string } => {
+  // Compute overall risk from zone statuses and calibration state
+  const computeOverallRisk = (
+    zones: Zone[],
+    calibrated: boolean
+  ): { label: string; color: string; bg: string; border: string } => {
     if (!zones || zones.length === 0) {
       return { label: "INITIALIZING", color: "text-gray-400", bg: "bg-gray-800/40", border: "border-gray-700" };
     }
+
+    let levelStr = "NORMAL";
     if (zones.some((z) => z.level === "RED")) {
+      levelStr = "HIGH";
+    } else if (zones.some((z) => z.level === "AMBER")) {
+      levelStr = "ELEVATED";
+    } else if (zones.some((z) => z.level === "CHECK")) {
+      levelStr = "SENSOR CHECK";
+    }
+
+    // While calibration is false, show neutral grey badge indicating assumed areas
+    if (!calibrated) {
+      return {
+        label: `Illustrative level: ${levelStr} (areas assumed)`,
+        color: "text-gray-300",
+        bg: "bg-gray-800/80",
+        border: "border-gray-700",
+      };
+    }
+
+    // Coloured RISK LEVEL badge shown only when calibrated is true
+    if (levelStr === "HIGH") {
       return { label: "RISK LEVEL: HIGH", color: "text-red-400", bg: "bg-red-950/60", border: "border-red-600" };
     }
-    if (zones.some((z) => z.level === "AMBER")) {
+    if (levelStr === "ELEVATED") {
       return { label: "RISK LEVEL: ELEVATED", color: "text-amber-400", bg: "bg-amber-950/60", border: "border-amber-600" };
     }
-    if (zones.some((z) => z.level === "CHECK")) {
-      return { label: "ATTENTION: SENSOR CHECK", color: "text-slate-300", bg: "bg-slate-800/60", border: "border-slate-600" };
+    if (levelStr === "SENSOR CHECK") {
+      return { label: "RISK LEVEL: SENSOR CHECK", color: "text-slate-300", bg: "bg-slate-800/60", border: "border-slate-600" };
     }
     return { label: "RISK LEVEL: NORMAL", color: "text-emerald-400", bg: "bg-emerald-950/60", border: "border-emerald-600" };
   };
@@ -78,7 +102,7 @@ export function AuthorityView({ onNavigate }: AuthorityViewProps) {
     }
   };
 
-  const overallRisk = data ? computeOverallRisk(data.zones) : null;
+  const overallRisk = data ? computeOverallRisk(data.zones, data.calibrated) : null;
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-gray-950 text-gray-100 font-sans">

@@ -80,6 +80,8 @@ python server.py
 ```
 Open `http://127.0.0.1:8000/` for the Authority view or `http://127.0.0.1:8000/public` for the Public view.
 
+> **Note:** In single-server mode, `frontend/dist` must be rebuilt (`npm run build`) and `python server.py` restarted to see UI changes.
+
 ### Running Backend Unit Tests
 
 Unit tests verify the hysteresis threshold logic, alert suggestions, routing algorithm, and admin controls:
